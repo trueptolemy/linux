@@ -108,3 +108,7 @@
 #ifdef CONFIG_SCHED_AUTOGROUP
 # include "autogroup.c"
 #endif
+
+#ifdef CONFIG_BPF_SYSCALL
+# include "bpf_sched.c"
+#endif
