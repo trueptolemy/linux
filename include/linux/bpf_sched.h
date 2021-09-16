@@ -23,6 +23,11 @@ static inline RET bpf_sched_##NAME(__VA_ARGS__)	\
 }
 #undef BPF_SCHED_HOOK
 
+static inline bool bpf_sched_enabled(void)
+{
+	return false;
+}
+
 #endif /* CONFIG_BPF_SYSCALL */
 
 #endif /* _BPF_CGROUP_H */

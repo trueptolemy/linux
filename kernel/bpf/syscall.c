@@ -35,6 +35,7 @@
 #include <linux/rcupdate_trace.h>
 #include <linux/memcontrol.h>
 #include <linux/trace_events.h>
+#include <linux/bpf_sched.h>
 
 #define IS_FD_ARRAY(map) ((map)->map_type == BPF_MAP_TYPE_PERF_EVENT_ARRAY || \
 			  (map)->map_type == BPF_MAP_TYPE_CGROUP_ARRAY || \
@@ -2871,6 +2872,9 @@ static void bpf_tracing_link_release(struct bpf_link *link)
 	struct bpf_tracing_link *tr_link =
 		container_of(link, struct bpf_tracing_link, link.link);
 
+	if (link->prog->type == BPF_PROG_TYPE_SCHED)
+		bpf_sched_dec();
+
 	WARN_ON_ONCE(bpf_trampoline_unlink_prog(&tr_link->link,
 						tr_link->trampoline));
 
@@ -3074,6 +3078,9 @@ static int bpf_tracing_prog_attach(struct bpf_prog *prog,
 		link = NULL;
 		goto out_unlock;
 	}
+
+	if (prog->type == BPF_PROG_TYPE_SCHED)
+		bpf_sched_inc();
 
 	link->tgt_prog = tgt_prog;
 	link->trampoline = tr;
