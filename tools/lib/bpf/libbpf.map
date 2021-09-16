@@ -458,6 +458,9 @@ LIBBPF_0.8.0 {
 		bpf_program__set_insns;
 		libbpf_register_prog_handler;
 		libbpf_unregister_prog_handler;
+		bpf_program__attach_sched;
+		bpf_program__is_sched;
+		bpf_program__set_sched;
 } LIBBPF_0.7.0;
 
 LIBBPF_1.0.0 {
