@@ -21,6 +21,7 @@ static inline RET bpf_sched_##NAME(__VA_ARGS__)	\
 {						\
 	return DEFAULT;				\
 }
+#include <linux/sched_hook_defs.h>
 #undef BPF_SCHED_HOOK
 
 static inline bool bpf_sched_enabled(void)
