@@ -106,6 +106,12 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 					continue;
 
 				/*
+				 * Can't migrate pinned pages, avoid touching them.
+				 */
+				if (page_maybe_dma_pinned(page))
+					continue;
+
+				/*
 				 * Don't mess with PTEs if page is already on the node
 				 * a single-threaded process is running on.
 				 */

@@ -1472,7 +1472,15 @@ retry:
 			nr_subpages = thp_nr_pages(page);
 			cond_resched();
 
-			if (PageHuge(page))
+			/*
+			 * If the page has a pin then expected_page_refs() will
+			 * not match and the whole migration will fail later
+			 * anyway, fail early and preserve the mappings.
+			 */
+			if (page_maybe_dma_pinned(page))
+				rc = -EAGAIN;
+
+			else if (PageHuge(page))
 				rc = unmap_and_move_huge_page(get_new_page,
 						put_new_page, private, page,
 						pass > 2, mode, reason,
