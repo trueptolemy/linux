@@ -73,18 +73,6 @@
 
 DECLARE_BITMAP(system_vectors, NR_VECTORS);
 
-static inline void cond_local_irq_enable(struct pt_regs *regs)
-{
-	if (regs->flags & X86_EFLAGS_IF)
-		local_irq_enable();
-}
-
-static inline void cond_local_irq_disable(struct pt_regs *regs)
-{
-	if (regs->flags & X86_EFLAGS_IF)
-		local_irq_disable();
-}
-
 __always_inline int is_valid_bugaddr(unsigned long addr)
 {
 	if (addr < TASK_SIZE_MAX)
@@ -177,9 +165,9 @@ static void do_error_trap(struct pt_regs *regs, long error_code, char *str,
 
 	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr) !=
 			NOTIFY_STOP) {
-		cond_local_irq_enable(regs);
+		irqentry_irq_enable(regs);
 		do_trap(trapnr, signr, str, regs, error_code, sicode, addr);
-		cond_local_irq_disable(regs);
+		irqentry_irq_disable(regs);
 	}
 }
 
@@ -300,7 +288,7 @@ DEFINE_IDTENTRY_ERRORCODE(exc_alignment_check)
 	if (!user_mode(regs))
 		die("Split lock detected\n", regs, error_code);
 
-	local_irq_enable();
+	irqentry_irq_enable(regs);
 
 	if (handle_user_split_lock(regs, error_code))
 		goto out;
@@ -309,7 +297,7 @@ DEFINE_IDTENTRY_ERRORCODE(exc_alignment_check)
 		error_code, BUS_ADRALN, NULL);
 
 out:
-	local_irq_disable();
+	irqentry_irq_disable(regs);
 }
 
 #ifdef CONFIG_VMAP_STACK
@@ -473,14 +461,14 @@ DEFINE_IDTENTRY(exc_bounds)
 	if (notify_die(DIE_TRAP, "bounds", regs, 0,
 			X86_TRAP_BR, SIGSEGV) == NOTIFY_STOP)
 		return;
-	cond_local_irq_enable(regs);
+	irqentry_irq_enable(regs);
 
 	if (!user_mode(regs))
 		die("bounds", regs, 0);
 
 	do_trap(X86_TRAP_BR, SIGSEGV, "bounds", regs, 0, 0, NULL);
 
-	cond_local_irq_disable(regs);
+	irqentry_irq_disable(regs);
 }
 
 enum kernel_gp_hint {
@@ -567,7 +555,7 @@ DEFINE_IDTENTRY_ERRORCODE(exc_general_protection)
 	unsigned long gp_addr;
 	int ret;
 
-	cond_local_irq_enable(regs);
+	irqentry_irq_enable(regs);
 
 	if (static_cpu_has(X86_FEATURE_UMIP)) {
 		if (user_mode(regs) && fixup_umip_exception(regs))
@@ -638,7 +626,7 @@ DEFINE_IDTENTRY_ERRORCODE(exc_general_protection)
 	die_addr(desc, regs, error_code, gp_addr);
 
 exit:
-	cond_local_irq_disable(regs);
+	irqentry_irq_disable(regs);
 }
 
 static bool do_int3(struct pt_regs *regs)
@@ -665,9 +653,9 @@ static void do_int3_user(struct pt_regs *regs)
 	if (do_int3(regs))
 		return;
 
-	cond_local_irq_enable(regs);
+	irqentry_irq_enable(regs);
 	do_trap(X86_TRAP_BP, SIGTRAP, "int3", regs, 0, 0, NULL);
-	cond_local_irq_disable(regs);
+	irqentry_irq_disable(regs);
 }
 
 DEFINE_IDTENTRY_RAW(exc_int3)
@@ -1003,7 +991,7 @@ static __always_inline void exc_debug_user(struct pt_regs *regs,
 		goto out;
 
 	/* It's safe to allow irq's after DR6 has been saved */
-	local_irq_enable();
+	irqentry_irq_enable(regs);
 
 	if (v8086_mode(regs)) {
 		handle_vm86_trap((struct kernel_vm86_regs *)regs, 0, X86_TRAP_DB);
@@ -1020,7 +1008,7 @@ static __always_inline void exc_debug_user(struct pt_regs *regs,
 		send_sigtrap(regs, 0, get_si_code(dr6));
 
 out_irq:
-	local_irq_disable();
+	irqentry_irq_disable(regs);
 out:
 	instrumentation_end();
 	irqentry_exit_to_user_mode(regs);
@@ -1064,7 +1052,7 @@ static void math_error(struct pt_regs *regs, int trapnr)
 	char *str = (trapnr == X86_TRAP_MF) ? "fpu exception" :
 						"simd exception";
 
-	cond_local_irq_enable(regs);
+	irqentry_irq_enable(regs);
 
 	if (!user_mode(regs)) {
 		if (fixup_exception(regs, trapnr, 0, 0))
@@ -1099,7 +1087,7 @@ static void math_error(struct pt_regs *regs, int trapnr)
 	force_sig_fault(SIGFPE, si_code,
 			(void __user *)uprobe_get_trap_addr(regs));
 exit:
-	cond_local_irq_disable(regs);
+	irqentry_irq_disable(regs);
 }
 
 DEFINE_IDTENTRY(exc_coprocessor_error)
@@ -1160,7 +1148,7 @@ static bool handle_xfd_event(struct pt_regs *regs)
 	if (WARN_ON(!user_mode(regs)))
 		return false;
 
-	local_irq_enable();
+	irqentry_irq_enable(regs);
 
 	err = xfd_enable_feature(xfd_err);
 
@@ -1173,7 +1161,7 @@ static bool handle_xfd_event(struct pt_regs *regs)
 		break;
 	}
 
-	local_irq_disable();
+	irqentry_irq_disable(regs);
 	return true;
 }
 
@@ -1188,12 +1176,12 @@ DEFINE_IDTENTRY(exc_device_not_available)
 	if (!boot_cpu_has(X86_FEATURE_FPU) && (cr0 & X86_CR0_EM)) {
 		struct math_emu_info info = { };
 
-		cond_local_irq_enable(regs);
+		irqentry_irq_enable(regs);
 
 		info.regs = regs;
 		math_emulate(&info);
 
-		cond_local_irq_disable(regs);
+		irqentry_irq_disable(regs);
 		return;
 	}
 #endif
