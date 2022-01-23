@@ -549,6 +549,7 @@ do {										\
 
 extern void __try_cmpxchg_user_wrong_size(void);
 
+#ifndef ARCH_HAS_ATOMIC_UACCESS_HELPERS
 #define unsafe_try_cmpxchg_user(_ptr, _oldp, _nval, _label) ({         \
        __typeof__(*(_ptr)) __ret;                                      \
        switch (sizeof(__ret)) {                                        \
@@ -571,6 +572,12 @@ extern void __try_cmpxchg_user_wrong_size(void);
        default: __try_cmpxchg_user_wrong_size();                       \
        }                                                               \
        __ret;                                          })
+#else
+
+int unsafe_cmpxchg_user_32(u32 __user *uaddr, u32 *curr_val, u32 new_val);
+int unsafe_cmpxchg_user_64(u64 __user *uaddr, u64 *curr_val, u64 new_val);
+
+#endif
 
 /*
  * We want the unsafe accessors to always be inlined and use

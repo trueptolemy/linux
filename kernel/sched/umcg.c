@@ -16,6 +16,11 @@
 
 #include "sched.h"
 
+/* FIXME: Debug */
+#ifndef ARCH_HAS_ATOMIC_UACCESS_HELPERS
+#define ARCH_HAS_ATOMIC_UACCESS_HELPERS 1
+#endif
+
 static struct task_struct *umcg_get_task(u32 tid)
 {
 	struct task_struct *tsk = NULL;
@@ -23,7 +28,7 @@ static struct task_struct *umcg_get_task(u32 tid)
 	if (tid) {
 		rcu_read_lock();
 		tsk = find_task_by_vpid(tid & UMCG_TID_MASK);
-		if (tsk && current->mm == tsk->mm && tsk->umcg_task)
+		if (tsk && tsk->umcg_task)
 			get_task_struct(tsk);
 		else
 			tsk = NULL;
@@ -37,16 +42,24 @@ static struct task_struct *umcg_get_task(u32 tid)
  * Pinning a page inhibits rmap based unmap for Anon pages. Doing a load
  * through the user mapping ensures the user mapping exists.
  */
+
+	/*if (!PageAnon(_pagep) ||						\
+	    get_user(_member, &(_self)->_member)) {				\*/
 #define umcg_pin_and_load(_self, _pagep, _member)				\
 ({										\
 	__label__ __out;							\
 	int __ret = -EFAULT;							\
 										\
-	if (pin_user_pages_fast((unsigned long)(_self), 1, 0, &(_pagep)) != 1)	\
-		goto __out;							\
+	if (pin_user_pages_fast((unsigned long)(_self), 1, 0, &(_pagep)) != 1) {	\
+		pr_warn("%s: pin_user_pages_fast\n", __func__);		\
+		goto __out;									\
+	}												\
 										\
-	if (!PageAnon(_pagep) ||						\
-	    get_user(_member, &(_self)->_member)) {				\
+	if (get_user(_member, &(_self)->_member)) {		\
+		if (!PageAnon(_pagep)) 									\
+			pr_warn("%s: PageAnon\n", __func__);		\
+		else										\
+			pr_warn("%s: get_user\n", __func__);	\
 		unpin_user_page(_pagep);					\
 		goto __out;							\
 	}									\
@@ -73,19 +86,25 @@ static int umcg_pin_pages(void)
 		return -EBUSY;
 
 	ret = umcg_pin_and_load(self, tsk->umcg_page, server_tid);
-	if (ret)
+	if (ret) {
+		pr_warn("%s: pin self\n", __func__);
 		goto clear_self;
+	}
 
 	ret = -ESRCH;
 	server = umcg_get_task(server_tid);
-	if (!server)
+	if (!server) {
+		pr_warn("%s: get task\n", __func__);
 		goto unpin_self;
+	}
 
 	/* must cache due to possible concurrent change */
 	tsk->umcg_server_task = READ_ONCE(server->umcg_task);
 	ret = umcg_pin_and_load(tsk->umcg_server_task, tsk->umcg_server_page, server_tid);
-	if (ret)
+	if (ret) {
+		pr_warn("%s: pin server\n", __func__);
 		goto clear_server;
+	}
 
 	tsk->umcg_server = server;
 
@@ -186,6 +205,9 @@ static int umcg_update_state(struct task_struct *tsk,
 		return -EFAULT;
 
 	unsafe_get_user(old, &self->state, Efault);
+
+/* FIXME: Debug*/
+#ifndef ARCH_HAS_ATOMIC_UACCESS_HELPERS
 	do {
 		if ((old & UMCG_TASK_MASK) != from)
 			goto fail;
@@ -195,6 +217,16 @@ static int umcg_update_state(struct task_struct *tsk,
 		new |= to & UMCG_TASK_MASK;
 
 	} while (!unsafe_try_cmpxchg_user(&self->state, &old, new, Efault));
+#else
+	if ((old & UMCG_TASK_MASK) != from)
+		goto fail;
+
+	new = old & ~(UMCG_TASK_MASK |
+                              UMCG_TF_PREEMPT | UMCG_TF_COND_WAIT);
+        new |= to & UMCG_TASK_MASK;
+	if (unsafe_cmpxchg_user_32(&self->state, &old, new))
+		goto Efault;
+#endif
 
 	if (to == UMCG_TASK_BLOCKED)
 		unsafe_put_user(now, &self->blocked_ts, Efault);
@@ -351,9 +383,17 @@ static int umcg_enqueue_runnable(struct task_struct *tsk)
 		return -EFAULT;
 
 	unsafe_get_user(first_ptr, head, Efault);
+
+/* FIXME: Debug*/
+#ifndef ARCH_HAS_ATOMIC_UACCESS_HELPERS
 	do {
 		unsafe_put_user(first_ptr, &self->runnable_workers_ptr, Efault);
 	} while (!unsafe_try_cmpxchg_user(head, &first_ptr, self_ptr, Efault));
+#else
+	unsafe_put_user(first_ptr, &self->runnable_workers_ptr, Efault);
+	if (unsafe_cmpxchg_user_64(head, &first_ptr, self_ptr))
+		goto Efault;
+#endif
 
 	user_access_end();
 	return 0;
@@ -505,6 +545,7 @@ void umcg_sys_exit(struct pt_regs *regs)
 		return;
 	}
 
+	pr_warn("%s: maybe kill task %d\n", __func__, current->pid);
 	umcg_unblock_and_wait();
 }
 
@@ -801,7 +842,7 @@ static int umcg_register(struct umcg_task __user *self, u32 flags, clockid_t whi
 
 	rcu_read_lock();
 	server = find_task_by_vpid(ut.server_tid);
-	if (server && server->mm == current->mm) {
+	if (server) {
 		if (flags == UMCG_CTL_WORKER) {
 			if (!server->umcg_task ||
 			    (server->flags & PF_UMCG_WORKER))
@@ -827,8 +868,8 @@ static int umcg_register(struct umcg_task __user *self, u32 flags, clockid_t whi
 		set_syscall_work(SYSCALL_UMCG);		/* hook syscall */
 		set_thread_flag(TIF_UMCG);		/* hook return-to-user */
 
+		pr_warn("%s: maybe kill task %d\n", __func__, current->pid);
 		umcg_unblock_and_wait();
-
 	} else {
 		if ((ut.state & (UMCG_TASK_MASK | UMCG_TF_MASK)) != UMCG_TASK_RUNNING)
 			return -EINVAL;

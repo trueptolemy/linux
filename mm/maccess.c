@@ -335,3 +335,29 @@ long strnlen_user_nofault(const void __user *unsafe_addr, long count)
 
 	return ret;
 }
+
+#ifdef ARCH_HAS_ATOMIC_UACCESS_HELPERS
+int unsafe_cmpxchg_user_32(u32 __user *uaddr, u32 *curr_val, u32 new_val)
+{
+	u32 __old = *curr_val;
+
+	/* Validate proper alignment. */
+	if (unlikely(((unsigned long)uaddr % sizeof(*uaddr)) ||
+			((unsigned long)curr_val % sizeof(*curr_val))))
+		return -EINVAL;
+
+	return __try_cmpxchg_user_32(curr_val, uaddr, __old, new_val);
+}
+
+int unsafe_cmpxchg_user_64(u64 __user *uaddr, u64 *curr_val, u64 new_val)
+{
+	u64 __old = *curr_val;
+
+	/* Validate proper alignment. */
+	if (unlikely(((unsigned long)uaddr % sizeof(*uaddr)) ||
+			((unsigned long)curr_val % sizeof(*curr_val))))
+		return -EINVAL;
+
+	return __try_cmpxchg_user_64(curr_val, uaddr, __old, new_val);
+}
+#endif
